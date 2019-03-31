@@ -11,7 +11,7 @@ various other useful automatic sugars.
 from pathlib import Path
 
 from declare_config import Configuration,
-    ConfiguredValue, \
+    Setting, \
     configuration_source, \
     enable_nested_settings
 
@@ -23,10 +23,10 @@ from declare_config import Configuration,
 @enable_expanduser
 class MyAppSettings(declare_config.Configuration):
     '''Settings for myapp.'''
-    homepage = ConfiguredValue('urls.root')
-    api_root = ConfiguredValue('urls.api_root', '${homepage}/api')
-    timeout_ms = ConfiguredValue('timeout_ms', 5000, int)
-    log_file = ConfiguredValue("log_location", ~/logs/myapp.log", Path)
+    homepage = Setting('urls.root')
+    api_root = Setting('urls.api_root', '${homepage}/api')
+    timeout_ms = Setting('timeout_ms', 5000, int)
+    log_file = Setting("log_location", ~/logs/myapp.log", Path)
 
 settings = MyAppSettings.load()
 

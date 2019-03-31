@@ -1,22 +1,20 @@
-"""Module for defining configuration file items declaratively.
-
-
-
-"""
+"""Module for defining configuration file items declaratively."""
 import os
 import pathlib
+import re
 
 import yaml
 
-#=============================================================================
+
+# ============================================================================
 # Configuration File Base Class
-#=============================================================================
+# ============================================================================
 
 class Configuration:
     """Base class for Configuration objects.
 
     Subclasses can take any of the decorators in this module defined for
-    configuration classes and can declare settings using the ConfiguredValue
+    configuration classes and can declare settings using the Setting
     descriptor.
 
     """
@@ -35,12 +33,12 @@ class Configuration:
         """
 
         """
-        if cls.provider is None:
-            raise TypeError(cls.__name__ + " has no provider defined")
-
         if args or kwargs:
             config_data = load_configuration(*args, **kwargs)
         else:
+            if cls.provider is None:
+                raise TypeError(cls.__name__ + " has no provider defined")
+
             config_data = cls.provider()
 
         if config_data is None:
@@ -49,7 +47,7 @@ class Configuration:
         return cls(config_data)
 
     def _resolve(self, config_path, default=None):
-        path_parts = key.split('.')
+        path_parts = config_path.split('.')
         current_path = self._config_data
         for item in path_parts:
             if item not in current_path:
@@ -58,76 +56,85 @@ class Configuration:
         else:
             return current_path
 
+    @classmethod
+    def setting_definitions(cls):
+        for attr_name in dir(cls):
+            attr_value = getattr(cls, attr_name)
+            if isinstance(attr_value, Setting):
+                yield attr_value
 
-#=============================================================================
+
+# ============================================================================
 # Configuration Providers
-#=============================================================================
+# ============================================================================
 
 def load_configuration_from_file(file_location, must_exist=False):
     file_location = pathlib.Path(file_location).expanduser()
     if not file_location.exists():
         if must_exist:
             raise ValueError("could not find configuration file at "
-                + file_location)
+                             + str(file_location))
         else:
             return None
 
     with file_location.open() as stream:
-        return yaml.load(stream)
+        return yaml.load(stream, Loader=yaml.FullLoader)
 
 
-def load_configuration_from_environment_variable(ev_name):
-    ev_value = os.getenv(environment_variable_name)
+def load_configuration_from_environment_variable(ev_name, must_exist=True):
+    ev_value = os.getenv(ev_name)
     if ev_value is None:
         return None
     else:
-        load_configuration_from_file(ev_value, must_exist=True)
+        return load_configuration_from_file(ev_value, must_exist=must_exist)
 
 
-def load_configuration(location):
+def load_configuration(location, **kwargs):
     """Attempts to load the configuration file as a dictionary from location.
 
     Returns None if the location cannot be found.
 
     """
-    if location.startswith("$"):
+    if isinstance(location, dict):
+        return location
+    elif location.startswith("$"):
         ev_name = location[1:]
-        return load_configuration_from_environment_variable(ev_name)
+        return load_configuration_from_environment_variable(ev_name, **kwargs)
     else:
-        return load_configuration_from_file(location)
+        return load_configuration_from_file(location, **kwargs)
 
 
-def chain_if_result_is_none(func1, func2):
+def chain_providers(func1, func2):
     if func2 is None:
         return func1
 
-    def chained(*args, **kwargs):
-        result = func1(*args, **kwargs)
+    def chained(cls, *args, **kwargs):
+        result = func1(cls)
         if result is not None:
             return result
         else:
-            return func2(*args, **kwargs)
+            return func2()
 
     return chained
 
 
-def configuration_provider(location):
+def configuration_provider(location, **kwargs):
     def decorator(configuration_class):
-        configuration_class.provider = classmethod(chain_if_result_is_none(
-            lambda cls: load_configuration(location),
-            configuration_class.provider))
+        configuration_class.provider = classmethod(
+            chain_providers(
+                lambda cls: load_configuration(location, **kwargs),
+                configuration_class.provider))
 
         return configuration_class
 
     return decorator
 
 
-
-#=============================================================================
+# ============================================================================
 # Configuration value descriptor
-#=============================================================================
+# ============================================================================
 
-class ConfiguredValue:
+class Setting:
     def __init__(self, config_path=None, default=None, setting_type=str):
         """Constructor.
 
@@ -181,6 +188,33 @@ class ConfiguredValue:
         """
         self.postprocessors.append(postprocessor)
 
+    def _get_configured_value(self, instance):
+        """Get the configured string from the Configuration object."""
+        configured_value = None
+        if self.config_path is not None:
+            configured_value = instance._resolve(self.config_path)
+
+        if configured_value is None:
+            if self.default is None:
+                raise ValueError("missing required config " + self.config_path)
+            else:
+                configured_value = self.default
+
+        return configured_value
+
+    def _process_configured_value(self, instance, configured_value):
+        """Apply all pre-/post-processors to the given configured value."""
+        result = configured_value
+        for preprocessor in self.preprocessors:
+            result = preprocessor(instance, result)
+
+        result = self.setting_type(result)
+
+        for postprocessor in self.postprocessors:
+            result = postprocessor(instance, result)
+
+        return result
+
     def __get__(self, instance, owner):
         """
 
@@ -192,65 +226,56 @@ class ConfiguredValue:
         if instance is None:
             return self
 
-        configured_value = None
-        if self.config_path is not None:
-            configured_value = instance.resolve(self.config_path)
-
-        if configured_value is None:
-            if self.default is None:
-                raise ValueError("missing required config " + self.config_path)
-            else:
-                configured_value = self.default
-
-        for preprocessor in self.preprocessors:
-            configured_value = preprocessor(instance, configured_value)
-
-        configured_value = self.setting_type(configured_value)
-
-        for postprocessor in self.postprocessors:
-            configured_value = postprocessor(instance, configured_value)
-
-        return configured_value
+        configured_value = self._get_configured_value(instance)
+        return self._process_configured_value(instance, configured_value)
 
 
-#=============================================================================
+# ============================================================================
 # Special Decorators
-#=============================================================================
+# ============================================================================
 
-def _get_configured_values(config_class):
-    for attr_name in dir(config_class):
-        attr_value = getattr(config_class, attr_name)
-        if isinstance(attr_value, ConfiguredValue):
-            yield attr_value
+def register_preprocessor(preprocessor):
+    def decorator(cls):
+        for configured_value in cls.setting_definitions():
+            configured_value.register_preprocessor(preprocessor)
+
+        return cls
+
+    return decorator
 
 
-def enable_nested_settings(config_class):
+def register_postprocessor(postprocessor):
+    def decorator(cls):
+        for configured_value in cls.setting_definitions():
+            configured_value.register_postprocessor(postprocessor)
+
+        return cls
+
+    return decorator
+
+
+def enable_expanduser(decorated):
+    """Decorator enabling HOME expansion (~) for Path settings."""
+    def postprocessor(settings, setting_value):
+        if isinstance(setting_value, pathlib.Path):
+            return setting_value.expanduser()
+        else:
+            return setting_value
+
+    return register_postprocessor(postprocessor)(decorated)
+
+
+def enable_nested_settings(decorated):
     """Decorator that enables nested settings.
 
     @param config_class: The decorated class
 
     """
-    substute_nested_settings = lambda settings, setting_value:
-        re.sub(r'\$\{(\w+)\}',
-            lambda m: str(getattr(instance, m.group(1))),
-            str(setting_value))
+    def preprocessor(settings, setting_value):
+        return re.sub(
+            r'\$\{(\w+)\}',
+            lambda m: str(getattr(settings, m.group(1))),
+            str(setting_value)
+        )
 
-    for configured_value in _get_configured_values(config_class):
-        configured_value.register_preprocessor(_substitute_nested_settings)
-
-    return config_class
-
-
-def enable_expanduser(config_class):
-    """Decorator that calls expanduser for all Path config settings.
-
-    @param config_class: The decorated class
-
-    """
-    expand_user = lambda settings, setting_value: settingValue.expanduser()
-
-    for configured_value in _get_configured_values(config_class):
-        if issubclass(configured_value.setting_type, pathlib.Path):
-            configured_value.register_postprocessor(expanduser)
-
-    return config_class
+    return register_preprocessor(preprocessor)(decorated)
