@@ -49,3 +49,12 @@ to the user's home directory.
 
 Currently only yaml configuration files are supported, though there are plans
 to add support for JSON and INI syntaxes.
+
+## Development
+
+Dependencies are managed with `pipenv`. To install dependencies for
+development, run `pipenv install --dev` from the project root.
+
+To run tests once with coverage, use `pipenv run pytest` from the project
+root. To run tests continuously during development, run `pipenv run ptw`
+instead.
