@@ -58,3 +58,5 @@ development, run `pipenv install --dev` from the project root.
 To run tests once with coverage, use `pipenv run pytest` from the project
 root. To run tests continuously during development, run `pipenv run ptw`
 instead.
+
+To upload to PyPi, run `pipenv run setup.py upload`.
