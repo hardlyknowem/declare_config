@@ -15,11 +15,11 @@ URL = 'https://github.com/HardlyKnowEm/declare_config'
 EMAIL = 'emma.lefavor@gmail.com'
 AUTHOR = 'Emma Lefavor'
 REQUIRES_PYTHON = '>=3.7.0'
-VERSION = "1.0"
+VERSION = "1.0.1"
 
 # What packages are required for this module to be executed?
 REQUIRED = [
-    'yaml'
+    'pyyaml'
 ]
 
 # What packages are optional?
